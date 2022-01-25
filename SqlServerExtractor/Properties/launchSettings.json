@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "SqlServerExtractor": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Server=localhost;Database=StackrS3C;Trusted_Connection=True;TrustServerCertificate=True;\""
+    }
+  }
+}
