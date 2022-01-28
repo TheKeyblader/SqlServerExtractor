@@ -12,9 +12,13 @@ namespace SqlServerExtractor
             _connection = connection;
         }
 
-        public Task<string> GetObjectDefinition(string name)
+        public async Task<string> GetObjectDefinition(string name)
         {
-            throw new NotImplementedException();
+            using var command = _connection.CreateCommand();
+            command.CommandText = $"SELECT definition FROM sys.sql_modules WHERE object_id = object_id('{name}');";
+
+            var value = await command.ExecuteScalarAsync();
+            return value as string;
         }
 
         public async IAsyncEnumerable<string> ListObject()

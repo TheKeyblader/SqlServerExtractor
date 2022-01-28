@@ -15,12 +15,19 @@ namespace SqlServerExtractor
             public string ConnectionString { get; set; }
             [CommandOption("-s|--separator"), DefaultValue('_')]
             public char FolderSeparator { get; set; }
-            [CommandOption("-o|--objectTye"), DefaultValue(ObjectType.All)]
+            [CommandOption("-t|--type"), DefaultValue(ObjectType.All)]
             public ObjectType ObjectType { get; set; }
+            [CommandOption("-d|--directory"), DefaultValue("./Scripts")]
+            public string OutputDirectory { get; set; }
         }
 
         public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
         {
+            AnsiConsole.Write(
+                new FigletText("Sql Server Extractor")
+                    .LeftAligned()
+                    .Color(Color.Green));
+
             await AnsiConsole.Status()
                 .SpinnerStyle(Style.Parse("olive"))
                 .StartAsync("Testing Connection", async ctx =>
@@ -28,7 +35,7 @@ namespace SqlServerExtractor
                      if (await TestConnectionAsync(settings.ConnectionString))
                      {
                          AnsiConsole.MarkupLine("Connexion to database [green]OK[/]");
-                         _connection = new SqlConnection(settings.ConnectionString);
+                         _connection = new SqlConnection(settings.ConnectionString + ";MultipleActiveResultSets=True");
                      }
                  });
 
@@ -43,22 +50,28 @@ namespace SqlServerExtractor
                 .AddColumns("Type", "Name")
                 .Title("Object List");
 
+            var dic = new Dictionary<IObjectExtractor, string[]>();
+
             await AnsiConsole.Live(table)
                 .StartAsync(async ctx =>
                 {
                     ctx.Refresh();
                     foreach (var extractor in extractors)
                     {
+                        var names = new List<string>();
                         await foreach (var name in extractor.ListObject())
                         {
+                            names.Add(name);
                             table.AddRow(extractor.Type.ToString(), name);
                             ctx.Refresh();
                         }
+                        dic.Add(extractor, names.ToArray());
                     }
                 });
 
-            await _connection.CloseAsync();
+            await ExtractContent(dic, settings);
 
+            await _connection.CloseAsync();
             return 0;
         }
 
@@ -90,7 +103,7 @@ namespace SqlServerExtractor
                 {
                     switch (value)
                     {
-                        case ObjectType.Views:
+                        case ObjectType.View:
                             var viewExtractor = new ViewExtractor(_connection);
                             extractors.Add(viewExtractor);
                             break;
@@ -111,6 +124,48 @@ namespace SqlServerExtractor
             }
             return extractors.ToArray();
         }
+
+        private async Task ExtractContent(Dictionary<IObjectExtractor, string[]> extractors, Settings settings)
+        {
+            async Task ExtractContent(IObjectExtractor extractor, ProgressTask progress)
+            {
+                var names = extractors[extractor];
+                progress.MaxValue = names.Length;
+                foreach (var name in names)
+                {
+                    var content = await extractor.GetObjectDefinition(name);
+
+                    if (string.IsNullOrEmpty(content))
+                        AnsiConsole.MarkupLine($"[olive]WARN :[/] The {extractor.Type} {name} definition is empty");
+                    else
+                    {
+                        var withoutScheme = $"{string.Join("", name.Split(".")[1..])}.sql";
+                        var folderPath = string.Join("/", withoutScheme.Split(settings.FolderSeparator)[..^1]);
+                        var fileName = withoutScheme.Split(settings.FolderSeparator)[^1];
+                        var path = Directory.CreateDirectory(Path.Join(settings.OutputDirectory, extractor.Type + "s", folderPath));
+
+                        await File.WriteAllTextAsync(Path.Join(path.FullName, fileName), content);
+                    }
+                    progress.Increment(1);
+                }
+            }
+
+            await AnsiConsole.Progress()
+                .AutoClear(false)
+                .StartAsync(async ctx =>
+                {
+                    var tasks = new Task[extractors.Count];
+
+                    for (int i = 0; i < extractors.Count; i++)
+                    {
+                        var extractor = extractors.Keys.ElementAt(i);
+                        var progress = ctx.AddTask($"Extracting {extractor.Type}s");
+                        tasks[i] = ExtractContent(extractor, progress);
+                    }
+
+                    await Task.WhenAll(tasks);
+                });
+        }
     }
 
     [Flags]
@@ -120,7 +175,7 @@ namespace SqlServerExtractor
         StoredProcedure = 1,
         Function = 2,
         Trigger = 4,
-        Views = 8,
-        All = StoredProcedure | Function | Trigger | Views
+        View = 8,
+        All = StoredProcedure | Function | Trigger | View
     }
 }

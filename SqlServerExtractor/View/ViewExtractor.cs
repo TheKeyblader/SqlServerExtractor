@@ -6,7 +6,7 @@ namespace SqlServerExtractor
     {
         private readonly SqlConnection _connection;
 
-        public ObjectType Type => ObjectType.Views;
+        public ObjectType Type => ObjectType.View;
 
         public ViewExtractor(SqlConnection connection)
         {
@@ -16,10 +16,10 @@ namespace SqlServerExtractor
         public async Task<string> GetObjectDefinition(string name)
         {
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT name FROM sys.views";
+            command.CommandText = $"SELECT definition FROM sys.sql_modules WHERE object_id = object_id('{name}');";
 
             var value = await command.ExecuteScalarAsync();
-            return null;
+            return value as string;
         }
 
         public async IAsyncEnumerable<string> ListObject()
